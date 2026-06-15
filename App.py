@@ -9,10 +9,26 @@ from ultralytics import YOLO
 
 
 # -----------------------------
+# Price table
+# -----------------------------
+PRICES = {
+    "bic-ma-chee":            2300,
+    "butter bread":           1500,
+    "cheese bagel":           2300,
+    "choco pain au raisin":   3500,
+    "fried soboro":           2200,
+    "kouign amann":           3500,
+    "milk croquette":         3000,
+    "tuna croquette":         3500,
+}
+DEFAULT_PRICE = 2500  # fallback for any class not in the table
+
+
+# -----------------------------
 # Page setup
 # -----------------------------
 st.set_page_config(
-    page_title="Smart Bakery Checkout",
+    page_title="Sungsimdang AI Checkout System",
     page_icon="🥐",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -105,6 +121,18 @@ st.markdown(
             border-radius: 18px;
             box-shadow: 0 8px 22px rgba(65, 45, 25, 0.06);
         }
+
+        .menu-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid #f0e8df;
+            font-size: 13px;
+        }
+        .menu-row:last-child { border-bottom: none; }
+        .menu-name { color: #4b2d18; font-weight: 500; }
+        .menu-price { color: #7a4d2d; font-weight: 700; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -117,10 +145,8 @@ st.markdown(
 st.markdown(
     """
     <div class="hero-card">
-        <div class="hero-title">🥐 Smart Bakery Checkout Dashboard</div>
-        <div class="hero-subtitle">
-            Upload a tray image, detect bakery items using your YOLO model, and show a modern AI checkout process for your project demo.
-        </div>
+        <div class="hero-title">🥐 Sungsimdang AI Checkout System</div>
+        <div class="hero-subtitle">Upload-Detect-Checkout </div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -139,9 +165,18 @@ with st.sidebar:
     imgsz = st.select_slider("Image size", options=[320, 416, 512, 640, 768, 1024], value=640)
 
     st.divider()
-    st.header("💸 Demo Price Settings")
-    default_price = st.number_input("Default item price (₩)", min_value=0, value=2500, step=100)
-    st.caption("For real checkout, replace this with a product-price database.")
+
+    # Real price menu in sidebar
+    st.header("💸 Menu & Prices")
+    menu_html = ""
+    for item, price in PRICES.items():
+        menu_html += (
+            f'<div class="menu-row">'
+            f'<span class="menu-name">{item.title()}</span>'
+            f'<span class="menu-price">₩{price:,}</span>'
+            f'</div>'
+        )
+    st.markdown(menu_html, unsafe_allow_html=True)
 
 
 @st.cache_resource(show_spinner=False)
@@ -152,7 +187,7 @@ def load_model(path: str):
 # -----------------------------
 # Process cards
 # -----------------------------
-st.subheader("Modern Checkout Process")
+st.subheader("Checkout Process")
 step_cols = st.columns(4)
 steps = [
     ("1", "Upload Tray", "Cashier/customer takes one tray photo."),
@@ -185,7 +220,7 @@ try:
     model_ready = True
 except Exception as e:
     model_ready = False
-    st.error("Model could not be loaded. Check that your path points directly to a .pt file, for example: E:\\Computer Vision\\my_model\\my_model.pt")
+    st.error("Model could not be loaded. Check that your path points directly to a .pt file.")
     st.exception(e)
 
 
@@ -234,7 +269,12 @@ if uploaded_file and model_ready:
                 cls_id = int(box.cls[0])
                 item_name = model.names[cls_id]
                 confidence = float(box.conf[0])
-                detected_rows.append({"Item": item_name, "Confidence": confidence})
+                unit_price = PRICES.get(item_name, DEFAULT_PRICE)
+                detected_rows.append({
+                    "Item": item_name,
+                    "Confidence": confidence,
+                    "Unit Price": unit_price,
+                })
 
         with right:
             st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -248,34 +288,41 @@ if uploaded_file and model_ready:
             total_items = len(detected_rows)
             unique_items = len(set(row["Item"] for row in detected_rows))
             avg_conf = sum(row["Confidence"] for row in detected_rows) / total_items
-            estimated_total = total_items * default_price
+            real_total = sum(row["Unit Price"] for row in detected_rows)
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Detected Items", total_items)
             m2.metric("Unique Products", unique_items)
             m3.metric("Avg. Confidence", f"{avg_conf:.0%}")
-            m4.metric("Demo Total", f"₩{estimated_total:,.0f}")
+            m4.metric("Total", f"₩{real_total:,.0f}")
 
-            st.markdown('<div class="status-success">✅ Checkout basket created successfully. Cashier can now review and confirm.</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="status-success">✅ Checkout basket created successfully. Cashier can now review and confirm.</div>',
+                unsafe_allow_html=True,
+            )
             st.write("")
 
+            # Build basket with real per-item prices
             counts = Counter(row["Item"] for row in detected_rows)
             basket_df = pd.DataFrame(
                 [
                     {
                         "Bakery Item": item,
                         "Quantity": qty,
-                        "Unit Price (₩)": default_price,
-                        "Subtotal (₩)": qty * default_price,
+                        "Unit Price (₩)": PRICES.get(item, DEFAULT_PRICE),
+                        "Subtotal (₩)": qty * PRICES.get(item, DEFAULT_PRICE),
                     }
                     for item, qty in counts.items()
                 ]
             )
 
-            detail_df = pd.DataFrame(detected_rows)
-            detail_df["Confidence"] = detail_df["Confidence"].map(lambda x: f"{x:.2%}")
+            detail_df = pd.DataFrame([
+                {"Item": r["Item"], "Confidence": f"{r['Confidence']:.2%}"}
+                for r in detected_rows
+            ])
 
             checkout_col, detail_col = st.columns([1.2, 1], gap="large")
+
             with checkout_col:
                 st.subheader("🧾 AI Checkout Basket")
                 edited_basket = st.data_editor(
@@ -290,15 +337,20 @@ if uploaded_file and model_ready:
                     },
                 )
 
-                recalculated_total = int((edited_basket["Quantity"] * edited_basket["Unit Price (₩)"]).sum())
-                st.success(f"Final demo payment total: ₩{recalculated_total:,.0f}")
+                recalculated_total = int(
+                    (edited_basket["Quantity"] * edited_basket["Unit Price (₩)"]).sum()
+                )
+                st.success(f"Final payment total: ₩{recalculated_total:,.0f}")
 
             with detail_col:
                 st.subheader("🔍 Detection Details")
                 st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
         else:
-            st.markdown('<div class="status-warn">⚠️ No bakery items were detected. Try lowering the confidence threshold or using a clearer tray image.</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="status-warn">⚠️ No bakery items were detected. Try lowering the confidence threshold or using a clearer tray image.</div>',
+                unsafe_allow_html=True,
+            )
 
     finally:
         if temp_path and os.path.exists(temp_path):
